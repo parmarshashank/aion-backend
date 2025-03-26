@@ -5,7 +5,6 @@ import { z } from 'zod';
 
 const prisma = new PrismaClient();
 
-// Validation schemas
 const signupSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8),
@@ -21,7 +20,6 @@ export class AuthService {
   async signup(data: z.infer<typeof signupSchema>) {
     const validatedData = signupSchema.parse(data);
 
-    // Check if user already exists
     const existingUser = await prisma.user.findUnique({
       where: { email: validatedData.email },
     });
@@ -30,10 +28,8 @@ export class AuthService {
       throw new Error('User already exists');
     }
 
-    // Hash password
     const hashedPassword = await bcrypt.hash(validatedData.password, 10);
 
-    // Create user
     const user = await prisma.user.create({
       data: {
         ...validatedData,
@@ -41,7 +37,6 @@ export class AuthService {
       },
     });
 
-    // Generate JWT token
     const token = jwt.sign(
       { userId: user.id },
       process.env.JWT_SECRET!,
@@ -61,7 +56,6 @@ export class AuthService {
   async login(data: z.infer<typeof loginSchema>) {
     const validatedData = loginSchema.parse(data);
 
-    // Find user
     const user = await prisma.user.findUnique({
       where: { email: validatedData.email },
     });
@@ -70,7 +64,6 @@ export class AuthService {
       throw new Error('Invalid credentials');
     }
 
-    // Verify password
     const isValidPassword = await bcrypt.compare(
       validatedData.password,
       user.password
@@ -80,7 +73,6 @@ export class AuthService {
       throw new Error('Invalid credentials');
     }
 
-    // Generate JWT token
     const token = jwt.sign(
       { userId: user.id },
       process.env.JWT_SECRET!,

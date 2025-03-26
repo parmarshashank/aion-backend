@@ -5,7 +5,6 @@ const chronicleSchema = z.object({
   id: z.string(),
   title: z.string(),
   content: z.string(),
-  tags: z.array(z.string()),
   userId: z.string(),
 });
 
@@ -15,7 +14,6 @@ interface QdrantSearchResult {
   payload: {
     title: string;
     content: string;
-    tags: string[];
     userId: string;
   };
 }
@@ -23,23 +21,16 @@ interface QdrantSearchResult {
 export class QdrantService {
   private client: QdrantClient;
   private collectionName: string;
-  private isQdrantAvailable: boolean = true;
 
   constructor() {
     this.client = new QdrantClient({
-      url: process.env.QDRANT_URL || 'http://localhost:6333',
+      url: process.env.QDRANT_URL,
       apiKey: process.env.QDRANT_API_KEY
     });
     this.collectionName = process.env.QDRANT_COLLECTION || 'chronicles';
-    
-    // Initialize and check availability
-    this.initQdrant().catch(err => {
-      console.error('Failed to initialize Qdrant:', err);
-      this.isQdrantAvailable = false;
-    });
   }
 
-  private async initQdrant() {
+  async init() {
     try {
       // Check if collection exists
       const collections = await this.client.getCollections();
@@ -48,68 +39,24 @@ export class QdrantService {
       );
 
       if (!exists) {
-        // Create collection if it doesn't exist
+        // Create collection with proper vector configuration
         await this.client.createCollection(this.collectionName, {
           vectors: {
-            size: 1536, // Size for OpenAI embeddings
-            distance: 'Cosine',
-          },
+            size: 1536,
+            distance: 'Cosine'
+          }
         });
       }
-      this.isQdrantAvailable = true;
-      return true;
     } catch (error) {
-      this.isQdrantAvailable = false;
       console.error('Failed to initialize Qdrant:', error);
-      return false;
+      throw error;
     }
   }
 
-  async upsertChronicle(chronicle: z.infer<typeof chronicleSchema>, embedding: number[]) {
-    // Skip if Qdrant is not available
-    if (!this.isQdrantAvailable) {
-      console.warn('Skipping Qdrant upsert because Qdrant is not available');
-      return { success: false, reason: 'qdrant_unavailable' };
-    }
-
+  async searchChronicles(queryVector: number[], userId: string, limit: number = 5): Promise<QdrantSearchResult[]> {
     try {
-      const validatedChronicle = chronicleSchema.parse(chronicle);
-      
-      await this.client.upsert(this.collectionName, {
-        points: [
-          {
-            id: validatedChronicle.id,
-            vector: embedding,
-            payload: {
-              title: validatedChronicle.title,
-              content: validatedChronicle.content,
-              tags: validatedChronicle.tags,
-              userId: validatedChronicle.userId,
-            },
-          },
-        ],
-      });
-      return { success: true };
-    } catch (error) {
-      console.error('Failed to upsert chronicle in Qdrant:', error);
-      this.isQdrantAvailable = false; // Mark as unavailable after error
-      return { success: false, reason: 'qdrant_error', error };
-    }
-  }
-
-  async searchChronicles(query: string, userId: string, limit: number = 5): Promise<QdrantSearchResult[]> {
-    // Skip if Qdrant is not available
-    if (!this.isQdrantAvailable) {
-      throw new Error('Qdrant search is not available');
-    }
-
-    try {
-      // TODO: Implement embedding generation for the query
-      // For now, we'll use a placeholder vector
-      const queryVector = new Array(1536).fill(0);
-
       const searchResult = await this.client.search(this.collectionName, {
-        vector: queryVector,
+        vector: queryVector, // Remove the named vector, just pass the vector directly
         filter: {
           must: [
             {
@@ -127,38 +74,31 @@ export class QdrantService {
         payload: result.payload as QdrantSearchResult['payload'],
       }));
     } catch (error) {
-      console.error('Failed to search chronicles in Qdrant:', error);
-      this.isQdrantAvailable = false; // Mark as unavailable after error
+      console.error('Failed to search chronicles:', error);
       throw error;
     }
   }
 
-  async deleteChronicle(id: string) {
-    // Skip if Qdrant is not available
-    if (!this.isQdrantAvailable) {
-      console.warn('Skipping Qdrant delete because Qdrant is not available');
-      return { success: false, reason: 'qdrant_unavailable' };
-    }
-
+  async upsertChronicle(chronicle: z.infer<typeof chronicleSchema>, embedding: number[]) {
     try {
-      await this.client.delete(this.collectionName, {
-        points: [id],
+      const validatedChronicle = chronicleSchema.parse(chronicle);
+      
+      await this.client.upsert(this.collectionName, {
+        points: [
+          {
+            id: validatedChronicle.id,
+            vector: embedding, // Remove the named vector, just pass the vector directly
+            payload: {
+              title: validatedChronicle.title,
+              content: validatedChronicle.content,
+              userId: validatedChronicle.userId,
+            },
+          },
+        ],
       });
-      return { success: true };
     } catch (error) {
-      console.error('Failed to delete chronicle from Qdrant:', error);
-      this.isQdrantAvailable = false; // Mark as unavailable after error
-      return { success: false, reason: 'qdrant_error', error };
+      console.error('Failed to upsert chronicle:', error);
+      throw error;
     }
-  }
-  
-  // Method to check and reset Qdrant availability
-  async checkAvailability() {
-    if (!this.isQdrantAvailable) {
-      // Try to reconnect
-      const available = await this.initQdrant().catch(() => false);
-      this.isQdrantAvailable = !!available;
-    }
-    return this.isQdrantAvailable;
   }
 }

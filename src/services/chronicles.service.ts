@@ -20,7 +20,6 @@ export class ChroniclesService {
     try {
       const validatedData = chronicleSchema.parse(data);
 
-      // Scrape content from reference links
       let scrapedContent = '';
       if (validatedData.referenceLinks.length > 0) {
         const scrapedContents = await Promise.all(
@@ -29,7 +28,6 @@ export class ChroniclesService {
         scrapedContent = scrapedContents.join('\n\n');
       }
 
-      // Create chronicle in database
       const chronicle = await prisma.chronicle.create({
         data: {
           ...validatedData,
@@ -37,30 +35,21 @@ export class ChroniclesService {
         },
       });
 
-      // Try to index in Qdrant, but don't let it block the chronicle creation
       try {
-        // Generate embedding for the chronicle content
-        // For now, we'll use a placeholder vector
         const embedding = new Array(1536).fill(0);
 
-        // Store in Qdrant
-        const qdrantResult = await qdrantService.upsertChronicle(
+        await qdrantService.upsertChronicle(
           {
             id: chronicle.id,
             title: chronicle.title,
-            content: chronicle.content,
-            tags: chronicle.tags,
+            content: `${chronicle.content}\n\nScraped Content:\n${scrapedContent}`,
             userId: chronicle.userId,
           },
           embedding
         );
-        
-        if (!qdrantResult.success) {
-          console.warn(`Chronicle created but not indexed in Qdrant: ${qdrantResult.reason}`);
-        }
       } catch (qdrantError) {
-        console.error('Failed to store chronicle in Qdrant (continuing anyway):', qdrantError);
-        // Continue even when Qdrant fails - the chronicle is already in the database
+        console.error('Failed to store chronicle in Qdrant:', qdrantError);
+        throw qdrantError;
       }
 
       return chronicle;
@@ -84,17 +73,12 @@ export class ChroniclesService {
 
   async searchChronicles(query: string, userId: string) {
     try {
-      // Try searching in Qdrant first
+      // TODO: Replace with actual embedding generation
+      const queryVector = new Array(1536).fill(0);
+      
       try {
-        // Check if Qdrant is available
-        const isQdrantAvailable = await qdrantService.checkAvailability();
-        
-        if (isQdrantAvailable) {
-          const searchResults = await qdrantService.searchChronicles(query, userId);
-          return searchResults;
-        } else {
-          throw new Error('Qdrant not available');
-        }
+        const searchResults = await qdrantService.searchChronicles(queryVector, userId);
+        return searchResults;
       } catch (qdrantError) {
         console.error('Qdrant search failed, falling back to database search:', qdrantError);
         
@@ -105,21 +89,18 @@ export class ChroniclesService {
             OR: [
               { title: { contains: query, mode: 'insensitive' } },
               { content: { contains: query, mode: 'insensitive' } },
-              { tags: { has: query } },
             ],
           },
           orderBy: { createdAt: 'desc' },
           take: 10,
         });
         
-        // Format results similar to Qdrant results
         return chronicles.map(c => ({
           id: c.id,
-          score: 1.0, // Default score for fallback results
+          score: 1.0, 
           payload: {
             title: c.title,
             content: c.content,
-            tags: c.tags,
             userId: c.userId,
           },
         }));
@@ -141,17 +122,14 @@ export class ChroniclesService {
         throw new Error('Chronicle not found or unauthorized');
       }
 
-      // Delete from database
       await prisma.chronicle.delete({
         where: { id },
       });
 
-      // Try to delete from Qdrant, but don't let it block the operation
       try {
         await qdrantService.deleteChronicle(id);
       } catch (qdrantError) {
         console.error('Failed to delete chronicle from Qdrant (continuing anyway):', qdrantError);
-        // Continue even when Qdrant fails - the chronicle is already deleted from the database
       }
 
       return { success: true };
