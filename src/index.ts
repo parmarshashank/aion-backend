@@ -11,7 +11,11 @@ const app = express();
 const prisma = new PrismaClient();
 
 // Middleware
-app.use(cors());
+
+app.use(cors({
+  origin: 'http://localhost:3000', // Specify exact origin instead of wildcard
+  credentials: true                // Allow credentials
+}));
 app.use(express.json());
 
 // Routes
@@ -19,7 +23,11 @@ import authRoutes from './routes/auth.routes';
 import chroniclesRoutes from './routes/chronicles.routes';
 import searchRoutes from './routes/search.routes';
 import userRoutes from './routes/user.routes';
+// Add this import
+import directSearchRouter from './routes/direct-search';
 
+// Add this route (along with your other routes)
+app.use('/api/search/direct', directSearchRouter);
 app.use('/api/auth', authRoutes);
 app.use('/api/chronicles', chroniclesRoutes);
 app.use('/api/search', searchRoutes);

@@ -37,21 +37,31 @@ export class ChroniclesService {
         },
       });
 
-      // TODO: Generate embedding for the chronicle content
-      // For now, we'll use a placeholder vector
-      const embedding = new Array(1536).fill(0);
+      // Try to index in Qdrant, but don't let it block the chronicle creation
+      try {
+        // Generate embedding for the chronicle content
+        // For now, we'll use a placeholder vector
+        const embedding = new Array(1536).fill(0);
 
-      // Store in Qdrant
-      await qdrantService.upsertChronicle(
-        {
-          id: chronicle.id,
-          title: chronicle.title,
-          content: chronicle.content,
-          tags: chronicle.tags,
-          userId: chronicle.userId,
-        },
-        embedding
-      );
+        // Store in Qdrant
+        const qdrantResult = await qdrantService.upsertChronicle(
+          {
+            id: chronicle.id,
+            title: chronicle.title,
+            content: chronicle.content,
+            tags: chronicle.tags,
+            userId: chronicle.userId,
+          },
+          embedding
+        );
+        
+        if (!qdrantResult.success) {
+          console.warn(`Chronicle created but not indexed in Qdrant: ${qdrantResult.reason}`);
+        }
+      } catch (qdrantError) {
+        console.error('Failed to store chronicle in Qdrant (continuing anyway):', qdrantError);
+        // Continue even when Qdrant fails - the chronicle is already in the database
+      }
 
       return chronicle;
     } catch (error) {
@@ -74,8 +84,46 @@ export class ChroniclesService {
 
   async searchChronicles(query: string, userId: string) {
     try {
-      const searchResults = await qdrantService.searchChronicles(query, userId);
-      return searchResults;
+      // Try searching in Qdrant first
+      try {
+        // Check if Qdrant is available
+        const isQdrantAvailable = await qdrantService.checkAvailability();
+        
+        if (isQdrantAvailable) {
+          const searchResults = await qdrantService.searchChronicles(query, userId);
+          return searchResults;
+        } else {
+          throw new Error('Qdrant not available');
+        }
+      } catch (qdrantError) {
+        console.error('Qdrant search failed, falling back to database search:', qdrantError);
+        
+        // Fallback to basic database search
+        const chronicles = await prisma.chronicle.findMany({
+          where: {
+            userId,
+            OR: [
+              { title: { contains: query, mode: 'insensitive' } },
+              { content: { contains: query, mode: 'insensitive' } },
+              { tags: { has: query } },
+            ],
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 10,
+        });
+        
+        // Format results similar to Qdrant results
+        return chronicles.map(c => ({
+          id: c.id,
+          score: 1.0, // Default score for fallback results
+          payload: {
+            title: c.title,
+            content: c.content,
+            tags: c.tags,
+            userId: c.userId,
+          },
+        }));
+      }
     } catch (error) {
       console.error('Failed to search chronicles:', error);
       throw error;
@@ -98,8 +146,13 @@ export class ChroniclesService {
         where: { id },
       });
 
-      // Delete from Qdrant
-      await qdrantService.deleteChronicle(id);
+      // Try to delete from Qdrant, but don't let it block the operation
+      try {
+        await qdrantService.deleteChronicle(id);
+      } catch (qdrantError) {
+        console.error('Failed to delete chronicle from Qdrant (continuing anyway):', qdrantError);
+        // Continue even when Qdrant fails - the chronicle is already deleted from the database
+      }
 
       return { success: true };
     } catch (error) {
@@ -107,4 +160,4 @@ export class ChroniclesService {
       throw error;
     }
   }
-} 
+}

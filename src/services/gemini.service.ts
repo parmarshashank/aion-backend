@@ -32,7 +32,6 @@ export class GeminiService {
         .map(c => `Title: ${c.title}\nContent: ${c.content}`)
         .join('\n\n');
 
-      // Create prompt
       const prompt = `Based on the following context, please answer the question. If the answer cannot be found in the context, say so.
 
 Context:

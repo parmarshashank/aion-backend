@@ -32,12 +32,10 @@ export class WebScraper {
 
       const page = await this.browser.newPage();
       
-      // Set timeout for page load
       await page.setDefaultNavigationTimeout(
         parseInt(process.env.SCRAPE_TIMEOUT || '30000')
       );
 
-      // Navigate to the URL
       await page.goto(validatedUrl, {
         waitUntil: 'networkidle0',
       });
@@ -57,11 +55,10 @@ export class WebScraper {
         // Get the main content
         const mainContent = document.body.innerText;
         
-        // Clean up the content
         return mainContent
           .replace(/\s+/g, ' ')
           .trim()
-          .slice(0, 5000); // Limit content length
+          .slice(0, 5000); 
       });
 
       await page.close();
